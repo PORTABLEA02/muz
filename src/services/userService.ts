@@ -64,16 +64,23 @@ export const userService = {
   // Membres de famille
   async getFamilyMembers(userId: string): Promise<FamilyMember[]> {
     try {
+      // Simplified query without orderBy to avoid composite index requirement
       const q = query(
         collection(db, 'familyMembers'),
-        where('userId', '==', userId),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', userId)
       );
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
+      const members = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as FamilyMember));
+      
+      // Sort in memory instead of using Firestore orderBy
+      return members.sort((a, b) => {
+        const dateA = new Date(a.createdAt || 0).getTime();
+        const dateB = new Date(b.createdAt || 0).getTime();
+        return dateB - dateA; // desc order
+      });
     } catch (error) {
       console.error('Erreur lors de la récupération des membres de famille:', error);
       throw error;
@@ -189,16 +196,23 @@ export const userService = {
 
   async getUserServiceRequests(userId: string): Promise<ServiceRequest[]> {
     try {
+      // Simplified query without orderBy to avoid composite index requirement
       const q = query(
         collection(db, 'serviceRequests'),
-        where('userId', '==', userId),
-        orderBy('submissionDate', 'desc')
+        where('userId', '==', userId)
       );
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
+      const requests = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       } as ServiceRequest));
+      
+      // Sort in memory instead of using Firestore orderBy
+      return requests.sort((a, b) => {
+        const dateA = new Date(a.submissionDate).getTime();
+        const dateB = new Date(b.submissionDate).getTime();
+        return dateB - dateA; // desc order
+      });
     } catch (error) {
       console.error('Erreur lors de la récupération des demandes utilisateur:', error);
       throw error;
@@ -283,10 +297,10 @@ export const userService = {
 
   // Listeners en temps réel
   subscribeToUserRequests(userId: string, callback: (requests: ServiceRequest[]) => void): Unsubscribe {
+    // Simplified query without orderBy to avoid composite index requirement
     const q = query(
       collection(db, 'serviceRequests'),
-      where('userId', '==', userId),
-      orderBy('submissionDate', 'desc')
+      where('userId', '==', userId)
     );
     
     return onSnapshot(q, (querySnapshot) => {
@@ -294,7 +308,15 @@ export const userService = {
         id: doc.id,
         ...doc.data()
       } as ServiceRequest));
-      callback(requests);
+      
+      // Sort in memory instead of using Firestore orderBy
+      const sortedRequests = requests.sort((a, b) => {
+        const dateA = new Date(a.submissionDate).getTime();
+        const dateB = new Date(b.submissionDate).getTime();
+        return dateB - dateA; // desc order
+      });
+      
+      callback(sortedRequests);
     });
   },
 
