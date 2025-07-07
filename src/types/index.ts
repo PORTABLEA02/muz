@@ -54,6 +54,11 @@ export interface ServiceRequest {
   documents: string[];
   comments?: string;
   reviewedBy?: string;
+  paymentMethod: 'mobile' | 'bank';
+  accountHolderName: string;
+  // Champs conditionnels selon le mode de paiement
+  mobileNumber?: string; // Seulement pour Mobile Monnaie
+  bankAccount?: string;  // Seulement pour Virement bancaire
   createdAt: Date;
   updatedAt: Date;
 }

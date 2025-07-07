@@ -125,8 +125,8 @@ export default function ServiceRequest() {
         }
       }
 
-      // Créer la demande
-      const requestData = {
+      // Créer l'objet de base de la demande
+      const baseRequestData = {
         userId: user.id,
         memberName: user.name,
         memberEmail: user.email,
@@ -136,8 +136,6 @@ export default function ServiceRequest() {
         amount: data.amount,
         description: data.description,
         paymentMethod: data.paymentMethod,
-        mobileNumber: data.mobileNumber,
-        bankAccount: data.bankAccount,
         accountHolderName: data.accountHolderName,
         status: 'pending' as const,
         submissionDate: new Date().toISOString(),
@@ -146,11 +144,33 @@ export default function ServiceRequest() {
         updatedAt: new Date()
       };
 
-      await userService.addServiceRequest(requestData);
+      // Ajouter les champs spécifiques selon le mode de paiement
+      let requestData;
+      if (data.paymentMethod === 'mobile') {
+        // Pour Mobile Monnaie : inclure seulement mobileNumber
+        requestData = {
+          ...baseRequestData,
+          mobileNumber: data.mobileNumber
+          // bankAccount est exclu
+        };
+      } else if (data.paymentMethod === 'bank') {
+        // Pour Virement bancaire : inclure seulement bankAccount
+        requestData = {
+          ...baseRequestData,
+          bankAccount: data.bankAccount
+          // mobileNumber est exclu
+        };
+      } else {
+        // Fallback (ne devrait pas arriver)
+        requestData = baseRequestData;
+      }
+
+      // Enregistrer la demande dans la base de données
+      const requestId = await userService.addServiceRequest(requestData);
 
       setSubmitResult({
         success: true,
-        message: 'Votre demande a été soumise avec succès. Vous recevrez une notification dès qu\'elle sera traitée.'
+        message: `Votre demande a été soumise avec succès et est maintenant "En attente de traitement". Numéro de référence: ${requestId.substring(0, 8).toUpperCase()}. Vous recevrez une notification dès qu'elle sera traitée par l'administrateur.`
       });
 
       // Réinitialiser le formulaire
@@ -163,6 +183,9 @@ export default function ServiceRequest() {
       setValue('bankAccount', '');
       setValue('accountHolderName', '');
       setSelectedFiles([]);
+
+      // Faire défiler vers le haut pour voir le message de succès
+      window.scrollTo({ top: 0, behavior: 'smooth' });
 
     } catch (error) {
       console.error('Erreur lors de la soumission:', error);
@@ -199,18 +222,34 @@ export default function ServiceRequest() {
           <div className="p-8">
             {/* Result Message */}
             {submitResult && (
-              <div className={`mb-6 p-4 rounded-lg border ${
+              <div className={`mb-6 p-6 rounded-xl border-2 ${
                 submitResult.success 
                   ? 'bg-green-50 border-green-200 text-green-800' 
                   : 'bg-red-50 border-red-200 text-red-800'
               }`}>
-                <div className="flex items-center">
+                <div className="flex items-start">
                   {submitResult.success ? (
-                    <CheckCircle className="h-5 w-5 mr-3" />
+                    <CheckCircle className="h-6 w-6 mr-3 mt-0.5 flex-shrink-0" />
                   ) : (
-                    <AlertCircle className="h-5 w-5 mr-3" />
+                    <AlertCircle className="h-6 w-6 mr-3 mt-0.5 flex-shrink-0" />
                   )}
-                  <p>{submitResult.message}</p>
+                  <div>
+                    <h4 className="font-semibold mb-2">
+                      {submitResult.success ? 'Demande soumise avec succès !' : 'Erreur lors de la soumission'}
+                    </h4>
+                    <p className="text-sm leading-relaxed">{submitResult.message}</p>
+                    {submitResult.success && (
+                      <div className="mt-4 p-3 bg-green-100 rounded-lg">
+                        <p className="text-sm font-medium text-green-900">Prochaines étapes :</p>
+                        <ul className="text-sm text-green-800 mt-1 space-y-1">
+                          <li>• Votre demande est maintenant <strong>"En attente de traitement"</strong></li>
+                          <li>• Un administrateur examinera votre dossier sous 48h</li>
+                          <li>• Vous recevrez une notification par email du résultat</li>
+                          <li>• Vous pouvez suivre l'état dans votre historique</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -285,9 +324,6 @@ export default function ServiceRequest() {
                 {errors.serviceId && (
                   <p className="mt-2 text-sm text-red-600 font-medium">Veuillez sélectionner un service</p>
                 )}
-                {!selectedServiceId && (
-                  <p className="mt-2 text-sm text-red-600">Veuillez sélectionner un type de service</p>
-                )}
                 <input
                   {...register('serviceId', { required: 'Veuillez sélectionner un service' })}
                   type="hidden"
@@ -329,7 +365,7 @@ export default function ServiceRequest() {
                   disabled={loading}
                 >
                   <option value="">
-                    {loading ? 'Chargement...' : 'Sélectionnez le bénéficiaire...'}
+                    {loading ? 'Chargement...' : ''}
                   </option>
                   <option value="self">
                     {user?.name} (Moi-même)
@@ -342,9 +378,6 @@ export default function ServiceRequest() {
                 </select>
                 {errors.beneficiary && (
                   <p className="mt-1 text-sm text-red-600 font-medium">{errors.beneficiary.message}</p>
-                )}
-                {!selectedBeneficiary && (
-                  <p className="mt-1 text-sm text-red-600">Veuillez sélectionner un bénéficiaire</p>
                 )}
               </div>
 
@@ -461,9 +494,6 @@ export default function ServiceRequest() {
                 
                 {errors.paymentMethod && (
                   <p className="mt-2 text-sm text-red-600 font-medium">Veuillez sélectionner un mode de paiement</p>
-                )}
-                {!paymentMethod && (
-                  <p className="mt-2 text-sm text-red-600">Veuillez sélectionner un mode de paiement</p>
                 )}
                 <input
                   {...register('paymentMethod', { required: 'Veuillez sélectionner un mode de paiement' })}
@@ -650,8 +680,8 @@ export default function ServiceRequest() {
                       <li>• <strong>Les pièces justificatives sont obligatoires</strong> pour toute demande</li>
                       <li>• Assurez-vous que tous les documents requis sont joints à votre demande</li>
                       <li>• Les demandes incomplètes peuvent être retardées ou rejetées</li>
-                      <li>• Vous recevrez une notification dès que votre demande sera traitée</li>
-                      <li>• Le délai de traitement est généralement de 48 h</li>
+                      <li>• Votre demande aura le statut <strong>"En attente de traitement"</strong> après soumission</li>
+                      <li>• Le délai de traitement est généralement de 48h ouvrables</li>
                     </ul>
                   </div>
                 </div>
@@ -662,7 +692,7 @@ export default function ServiceRequest() {
                 <button
                   type="submit"
                   disabled={isSubmitting || !selectedService || !selectedBeneficiary || !paymentMethod || selectedFiles.length === 0}
-                  className="flex items-center px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-lg font-medium"
+                  className="flex items-center px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-lg font-medium shadow-lg hover:shadow-xl"
                 >
                   {isSubmitting ? (
                     <>
