@@ -1,143 +1,133 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../lib/firebase';
-import { authService } from '../services/authService';
-import { userService } from '../services/userService';
-import { User } from '../types';
+import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { AuthService, type AuthUser } from '../services/authService';
+import { AuditService } from '../services/auditService';
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   login: (email: string, password: string) => Promise<boolean>;
-  logout: () => Promise<void>;
-  resetPassword: (email: string) => Promise<boolean>;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
-  updateProfile: (userData: Partial<User>) => Promise<void>;
-  loading: boolean;
+  logout: () => void;
   isAuthenticated: boolean;
+  updatePassword: (newPassword: string) => void;
+  refreshUser: () => Promise<void>;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
-      
-      if (firebaseUser) {
-        try {
-          // Récupérer les données utilisateur complètes depuis Firestore
-          const userData = await userService.getUserById(firebaseUser.uid);
-          if (userData) {
-            setUser(userData);
-          } else {
-            // Si l'utilisateur n'existe pas dans Firestore, le déconnecter
-            await authService.logout();
-            setUser(null);
-          }
-        } catch (error) {
-          console.error('Erreur lors de la récupération des données utilisateur:', error);
-          setUser(null);
-        }
-      } else {
-        setUser(null);
+  // Vérifier si l'utilisateur est déjà connecté au chargement
+  React.useEffect(() => {
+    const checkUser = async () => {
+      try {
+        const currentUser = await AuthService.getCurrentUser();
+        setUser(currentUser);
+      } catch (error) {
+        console.error('Error checking current user:', error);
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
+    checkUser();
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       setLoading(true);
-      const userData = await authService.login(email, password);
-      if (userData) {
-        setUser(userData);
+      const authUser = await AuthService.signIn(email, password);
+      
+      if (authUser) {
+        setUser(authUser);
+        
+        // Log de connexion
+        await AuditService.createLog(
+          'Connexion utilisateur',
+          `Connexion réussie pour ${authUser.email}`,
+          'success',
+          'Authentification'
+        );
+        
         return true;
       }
-      return false;
-    } catch (error: any) {
-      console.error('Erreur de connexion:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const logout = async (): Promise<void> => {
-    try {
-      setLoading(true);
-      await authService.logout();
-      setUser(null);
-    } catch (error) {
-      console.error('Erreur de déconnexion:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetPassword = async (email: string): Promise<boolean> => {
-    try {
-      await authService.resetPassword(email);
-      return true;
-    } catch (error: any) {
-      console.error('Erreur de réinitialisation:', error);
-      throw error;
-    }
-  };
-
-  const changePassword = async (currentPassword: string, newPassword: string): Promise<boolean> => {
-    try {
-      await authService.changePassword(currentPassword, newPassword);
       
-      // Mettre à jour l'utilisateur local
+      return false;
+    } catch (error) {
+      console.error('Login error:', error);
+      
+      // Log d'erreur de connexion
+      await AuditService.createLog(
+        'Erreur de connexion',
+        `Tentative de connexion échouée pour ${email}`,
+        'error',
+        'Authentification'
+      );
+      
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
       if (user) {
-        const updatedUser = { ...user, firstLogin: false };
-        setUser(updatedUser);
+        // Log de déconnexion
+        await AuditService.createLog(
+          'Déconnexion utilisateur',
+          `Déconnexion de ${user.email}`,
+          'info',
+          'Authentification'
+        );
       }
       
-      return true;
-    } catch (error: any) {
-      console.error('Erreur de changement de mot de passe:', error);
-      throw error;
-    }
-  };
-
-  const updateProfile = async (userData: Partial<User>): Promise<void> => {
-    if (!user) throw new Error('Utilisateur non connecté');
-    
-    try {
-      await userService.updateUser(user.id, {
-        ...userData,
-        updatedAt: new Date()
-      });
-      
-      // Mettre à jour l'état local
-      setUser({ ...user, ...userData });
+      await AuthService.signOut();
+      setUser(null);
     } catch (error) {
-      console.error('Erreur de mise à jour du profil:', error);
-      throw error;
+      console.error('Logout error:', error);
     }
   };
 
-  const value = {
-    user,
-    login,
-    logout,
-    resetPassword,
-    changePassword,
-    updateProfile,
-    loading,
-    isAuthenticated: !!user
+  const updatePassword = async (newPassword: string) => {
+    try {
+      const success = await AuthService.updatePassword(newPassword);
+      
+      if (success && user) {
+        // Recharger complètement le profil utilisateur depuis Supabase
+        // pour s'assurer que l'état est synchronisé avec la source de vérité
+        const refreshedUser = await AuthService.getCurrentUser();
+        if (refreshedUser) {
+          setUser(refreshedUser);
+        }
+        
+        // Log de changement de mot de passe
+        await AuditService.createLog(
+          'Changement de mot de passe',
+          `Mot de passe modifié pour ${refreshedUser?.email || user.email}`,
+          'success',
+          'Sécurité'
+        );
+      }
+    } catch (error) {
+      console.error('Update password error:', error);
+    }
   };
+
+  const refreshUser = async () => {
+    try {
+      const currentUser = await AuthService.getCurrentUser();
+      setUser(currentUser);
+    } catch (error) {
+      console.error('Refresh user error:', error);
+    }
+  };
+
+  const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{ user, login, logout, isAuthenticated, updatePassword, refreshUser, loading }}>
       {children}
     </AuthContext.Provider>
   );
